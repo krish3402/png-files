@@ -1,0 +1,80 @@
+@Library('stratus-sharedlibrary@chje') _
+
+def pcfInfo = (readYaml([text: libraryResource('config.yaml')])).pcf
+def credentialsId = pcfInfo.foundations[FOUNDATION].credentialsIdItcf
+def api = pcfInfo.foundations[FOUNDATION].api
+
+pipeline {
+    agent { label 'linux' }
+    parameters {
+        choice(name: 'FOUNDATION', choices: ['sb-west', 'np-east', 'np-west' ], description: 'Which ENV you want to get the config servers restage list?')
+        booleanParam(name: 'APPS_RESTAGE', defaultValue: false, description: 'Do you want to Restage Config Servers??')         
+    }   
+    stages {  
+stage('Checkout stage') {
+            steps {
+                script{
+                    checkout scm
+                    currentBuild.displayName = "#${BUILD_NUMBER} - ${FOUNDATION} - Apps Restage-${APPS_RESTAGE}"
+                     //def pcfInfo = (readYaml([text: libraryResource('config.yaml')])).pcf
+                    // def credentialsId = pcfInfo.foundations[FOUNDATION].credentialsIdItcf
+                    // def api = pcfInfo.foundations[FOUNDATION].api 
+                }
+            }
+        } 
+        
+stage('Get Config Servers to Restage') {
+            steps {
+                script{
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: credentialsId,
+                            usernameVariable: 'PCF_USER', 
+                            passwordVariable: 'PCF_PASS'
+                        )
+                    ]) {
+                    withEnv(['CF_STARTUP_TIMEOUT=30']) {
+                            sh """
+ 				 cf login -a ${api} \
+                                    -u $PCF_USER -p $PCF_PASS --skip-ssl-validation
+                                chmod +x ${WORKSPACE}/get_apps_list_to_restage.sh
+                                ./get_apps_list_to_restage.sh
+                            """
+                        }  
+                    }
+
+                }
+            }
+        }
+        
+ stage('restage') {
+            when { expression { return ( params.APPS_RESTAGE ) } }
+                steps {
+                    script{
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: credentialsId,
+                            usernameVariable: 'PCF_USER', 
+                            passwordVariable: 'PCF_PASS'
+                        )
+]) { 
+                        withEnv(['CF_STARTUP_TIMEOUT=30']) {
+                                sh """
+                                    cf login -a ${api} \
+                                        -u $PCF_USER -p $PCF_PASS --skip-ssl-validation
+                                    chmod +x ${WORKSPACE}/apps_restage.sh
+                                    ./apps_restage.sh     
+                                """
+}
+                        }
+
+                    }
+                }
+            }    
+        }
+        post { 
+            always { 
+                cleanWs()
+            }
+        }
+    }
